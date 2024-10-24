@@ -4,8 +4,6 @@ from nonebot.plugin import PluginMetadata
 from nonebot.rule import to_me
 from nonebot.typing import T_State
 import httpx
-import os
-import tempfile
 import asyncio
 import time
 from collections import defaultdict
@@ -17,7 +15,6 @@ __plugin_meta__ = PluginMetadata(
     type="application",
     homepage="https://github.com/Endless-Path/Endless-path-nonebot-plugins/tree/main/nonebot-plugin-xjj_video",
     supported_adapters={"~onebot.v11"},
-
 )
 
 last_use_time = defaultdict(float)
@@ -56,18 +53,6 @@ async def get_video_url(client, url):
         logger.error(f"Error fetching video from {url}: {str(e)}")
     return None
 
-async def download_video(client, url):
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
-            async with client.stream("GET", url, timeout=30.0, follow_redirects=True) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes():
-                    temp_file.write(chunk)
-            return temp_file.name
-    except Exception as e:
-        logger.error(f"Error downloading video from {url}: {str(e)}")
-        return None
-
 @xjj_video.handle()
 async def handle_xjj_video(bot: Bot, event: MessageEvent, state: T_State):
     user_id = event.get_user_id()
@@ -79,49 +64,45 @@ async def handle_xjj_video(bot: Bot, event: MessageEvent, state: T_State):
 
     last_use_time[user_id] = current_time
 
-    temp_files = []
+    video_urls = []
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            video_urls = await asyncio.gather(*[get_video_url(client, url) for url in API_ENDPOINTS])
-            video_urls = [url for url in video_urls if url]
+            for api_url in API_ENDPOINTS:
+                video_url = await get_video_url(client, api_url)
+                if video_url:
+                    video_urls.append(video_url)
+                if len(video_urls) >= 5:  # 获取到5个视频URL就停止
+                    break
             
             logger.info(f"Retrieved {len(video_urls)} valid video URLs")
             
             if not video_urls:
                 await bot.send(event, "获取视频失败，请稍后再试。")
                 return
-            
-            temp_files = await asyncio.gather(*[download_video(client, url) for url in video_urls])
-            temp_files = [file for file in temp_files if file]  # 过滤掉下载失败的视频
-        
-        if not temp_files:
-            await bot.send(event, "所有视频下载失败，请稍后再试。")
-            return
 
-        # Limit the number of videos to send (e.g., maximum 3)
-        max_videos = 3
-        temp_files = temp_files[:max_videos]
-
-        for i, temp_file in enumerate(temp_files, start=1):
+        # 创建转发消息节点列表
+        messages = []
+        for i, video_url in enumerate(video_urls, start=1):
             try:
-                if event.message_type == "group":
-                    await bot.send_group_msg(group_id=event.group_id, message=MessageSegment.video(file=temp_file))
-                else:
-                    await bot.send_private_msg(user_id=event.user_id, message=MessageSegment.video(file=temp_file))
-                logger.info(f"Sent video {i} successfully")
-                await asyncio.sleep(1)  # Add a 1-second delay between sending videos
+                video_msg = MessageSegment.video(file=video_url)
+                node = {
+                    "type": "node",
+                    "data": {
+                        "name": "小姐姐视频",
+                        "uin": bot.self_id,
+                        "content": video_msg
+                    }
+                }
+                messages.append(node)
             except Exception as e:
-                logger.error(f"Error sending video {i}: {str(e)}")
+                logger.error(f"Error preparing video {i}: {str(e)}")
 
-        await bot.send(event, f"成功发送了 {len(temp_files)} 个视频。")
+        if messages:
+            # 发送转发消息
+            await bot.call_api("send_group_forward_msg", group_id=event.group_id, messages=messages)
+            logger.info(f"Sent {len(messages)} videos as a forward message")
+        else:
+            await bot.send(event, "无法生成转发消息，请稍后再试。")
     except Exception as e:
         logger.error(f"Error in handle_xjj_video: {str(e)}")
         await bot.send(event, f"发送视频失败：{str(e)}")
-    finally:
-        # 删除所有临时文件
-        for temp_file in temp_files:
-            try:
-                os.unlink(temp_file)
-                logger.info(f"Deleted temporary file: {temp_file}")
-            except Exception as e:
-                logger.error(f"Error deleting temporary file {temp_file}: {str(e)}")
