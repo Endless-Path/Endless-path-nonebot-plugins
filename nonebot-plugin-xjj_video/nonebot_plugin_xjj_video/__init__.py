@@ -1,17 +1,18 @@
 from nonebot import on_command, logger
-from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment, GroupMessageEvent, PrivateMessageEvent
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import to_me
 from nonebot.typing import T_State
 import httpx
 import asyncio
 import time
+import random
 from collections import defaultdict
 
 __plugin_meta__ = PluginMetadata(
     name="小姐姐视频",
     description="获取并发送小姐姐视频",
-    usage='输入"小姐姐视频"或"小姐姐"触发',
+    usage='输入"小姐姐视频"或"小姐姐"触发，使用"@bot 小姐姐 n"指定数量，n默认3，最高5',
     type="application",
     homepage="https://github.com/Endless-Path/Endless-path-nonebot-plugins/tree/main/nonebot-plugin-xjj_video",
     supported_adapters={"~onebot.v11"},
@@ -32,23 +33,12 @@ API_ENDPOINTS = [
 
 async def get_video_url(client, url):
     try:
-        response = await client.get(url, timeout=10.0, follow_redirects=True)
+        response = await client.get(url, timeout=10.0)
         response.raise_for_status()
-        
-        if url == API_ENDPOINTS[4]:
+        if url == API_ENDPOINTS[4]:  # 直接返回URL类型
             return url
-        
         data = response.json()
-        
-        if url == API_ENDPOINTS[0]:
-            return data.get("data")
-        elif url == API_ENDPOINTS[1]:
-            return data.get("data")
-        elif url == API_ENDPOINTS[2]:
-            return data.get("data")
-        elif url == API_ENDPOINTS[3]:
-            return data.get("data", {}).get("video")
-        
+        return data.get("data") if url != API_ENDPOINTS[3] else data.get("data", {}).get("video")
     except Exception as e:
         logger.error(f"Error fetching video from {url}: {str(e)}")
     return None
@@ -61,48 +51,50 @@ async def handle_xjj_video(bot: Bot, event: MessageEvent, state: T_State):
         remaining_time = int(COOLDOWN_TIME - (current_time - last_use_time[user_id]))
         await bot.send(event, f"命令冷却中，请在{remaining_time}秒后再试。")
         return
-
     last_use_time[user_id] = current_time
 
+    # 获取视频数量参数
+    args = str(event.get_message()).strip().split()
+    video_count = min(max(int(args[1]), 1), 5) if len(args) > 1 and args[1].isdigit() else 3
+
+    # 随机选择 API 端点并获取视频 URL
+    random.shuffle(API_ENDPOINTS)
     video_urls = []
-    try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            for api_url in API_ENDPOINTS:
-                video_url = await get_video_url(client, api_url)
-                if video_url:
-                    video_urls.append(video_url)
-                if len(video_urls) >= 5:  # 获取到5个视频URL就停止
-                    break
-            
-            logger.info(f"Retrieved {len(video_urls)} valid video URLs")
-            
-            if not video_urls:
-                await bot.send(event, "获取视频失败，请稍后再试。")
-                return
+    async with httpx.AsyncClient() as client:
+        for api_url in API_ENDPOINTS:
+            video_url = await get_video_url(client, api_url)
+            if video_url:
+                video_urls.append(video_url)
+            if len(video_urls) >= video_count:
+                break
 
-        # 创建转发消息节点列表
-        messages = []
-        for i, video_url in enumerate(video_urls, start=1):
+    if not video_urls:
+        await bot.send(event, "获取视频失败，请稍后再试。")
+        return
+
+    # 根据消息类型发送
+    if isinstance(event, GroupMessageEvent):
+        messages = [
+            {"type": "node", "data": {"name": "小姐姐视频", "uin": bot.self_id, "content": MessageSegment.video(file=url)}}
+            for url in video_urls
+        ]
+        # 使用重试机制发送转发消息
+        for attempt in range(3):
             try:
-                video_msg = MessageSegment.video(file=video_url)
-                node = {
-                    "type": "node",
-                    "data": {
-                        "name": "小姐姐视频",
-                        "uin": bot.self_id,
-                        "content": video_msg
-                    }
-                }
-                messages.append(node)
+                await bot.call_api("send_group_forward_msg", group_id=event.group_id, messages=messages)
+                logger.info(f"Sent {len(messages)} videos as a forward message")
+                break
             except Exception as e:
-                logger.error(f"Error preparing video {i}: {str(e)}")
-
-        if messages:
-            # 发送转发消息
-            await bot.call_api("send_group_forward_msg", group_id=event.group_id, messages=messages)
-            logger.info(f"Sent {len(messages)} videos as a forward message")
+                logger.error(f"Error sending group forward message attempt {attempt + 1}: {str(e)}")
+                await asyncio.sleep(2)
         else:
             await bot.send(event, "无法生成转发消息，请稍后再试。")
-    except Exception as e:
-        logger.error(f"Error in handle_xjj_video: {str(e)}")
-        await bot.send(event, f"发送视频失败：{str(e)}")
+    elif isinstance(event, PrivateMessageEvent):
+        # 私聊逐条发送视频
+        for video_url in video_urls:
+            try:
+                await bot.send(event, MessageSegment.video(file=video_url))
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Error sending video in private chat: {str(e)}")
+                await bot.send(event, "发送视频失败，请稍后再试。")
