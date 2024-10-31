@@ -17,6 +17,12 @@
     >nonebot-plugin-profile_settings
 - 发送耀阳语音
     >nonebot-plugin-yaoyang
+- 群打卡
+    >nonebot-plugin-group_sign
+- 戳一戳
+    >nonebot-plugin-user_poke
+- 人机合一戳一戳
+    >nonebot-plugin-bot_poke
 
 ## 安装
 
