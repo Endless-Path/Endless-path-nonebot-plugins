@@ -11,16 +11,15 @@ from collections import defaultdict
 
 __plugin_meta__ = PluginMetadata(
     name="小姐姐视频",
-    description="送小姐姐视频",
+    description="获取并发送小姐姐视频",
     usage='输入"小姐姐视频"或"小姐姐"触发，使用"@bot 小姐姐 n"指定数量，n默认3，最高5',
     type="application",
     homepage="https://github.com/Endless-Path/Endless-path-nonebot-plugins/tree/main/nonebot-plugin-xjj_video",
     supported_adapters={"~onebot.v11"},
 )
 
-# 定义视频文件夹路径和最大文件编号
-VIDEO_DIR = Path(__file__).parent / "video"
-MAX_VIDEO_NUMBER = 997  # 文件夹中视频编号最大值
+# 定义 URL 文件路径
+URL_FILE_PATH = Path(__file__).parent / "visited_urls.txt"
 
 # 冷却时间管理
 last_use_time = defaultdict(float)
@@ -28,6 +27,19 @@ COOLDOWN_TIME = 60  # 冷却时间，单位：秒
 
 # 定义命令
 xjj_video = on_command("小姐姐视频", aliases={"小姐姐"}, rule=to_me(), priority=5)
+
+# 缓存 URL 列表
+video_urls = []
+
+def load_video_urls():
+    """加载视频 URL 文件到内存"""
+    global video_urls
+    if URL_FILE_PATH.exists():
+        with open(URL_FILE_PATH, "r", encoding="utf-8") as f:
+            video_urls = [line.strip() for line in f if line.strip()]
+            logger.info(f"已加载 {len(video_urls)} 个视频 URL")
+    else:
+        logger.warning("视频 URL 文件不存在，请检查路径和文件。")
 
 @xjj_video.handle()
 async def handle_xjj_video(bot: Bot, event: MessageEvent, state: T_State):
@@ -46,19 +58,22 @@ async def handle_xjj_video(bot: Bot, event: MessageEvent, state: T_State):
     args = str(event.get_message()).strip().split()
     video_count = min(max(int(args[1]), 1), 5) if len(args) > 1 and args[1].isdigit() else 3
 
-    # 随机选择文件编号
-    selected_numbers = random.sample(range(1, MAX_VIDEO_NUMBER + 1), video_count)
+    # 加载视频 URL 列表（仅在缓存为空时加载）
+    if not video_urls:
+        load_video_urls()
 
-    # 构建文件路径并逐条发送视频
-    for number in selected_numbers:
-        video_path = VIDEO_DIR / f"{number}.mp4"
-        if not video_path.exists():
-            logger.warning(f"视频文件 {video_path.name} 不存在，跳过。")
-            continue
-        
+    if not video_urls:
+        await bot.send(event, "没有可用的视频 URL，请检查配置文件。")
+        return
+
+    # 随机选择指定数量的视频 URL
+    selected_urls = random.sample(video_urls, min(video_count, len(video_urls)))
+
+    # 逐条发送视频 URL
+    for url in selected_urls:
         try:
-            await bot.send(event, MessageSegment.video(file=f"file:///{video_path.resolve()}"))
+            await bot.send(event, MessageSegment.video(file=url))
             await asyncio.sleep(1)  # 避免消息发送过快
         except Exception as e:
-            logger.error(f"Error sending video {video_path.name}: {str(e)}")
-            await bot.send(event, f"发送视频 {video_path.name} 失败，请稍后再试。")
+            logger.error(f"Error sending video from URL {url}: {str(e)}")
+            await bot.send(event, f"发送视频失败，请稍后再试。")
