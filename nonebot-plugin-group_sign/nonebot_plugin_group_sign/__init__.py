@@ -1,47 +1,48 @@
-import random
-import asyncio
-from nonebot import require, get_bot, on_command
-from nonebot.permission import SUPERUSER
-from nonebot.adapters.onebot.v11 import Bot
-from nonebot.log import logger
+import nonebot
+from nonebot import get_driver
+from nonebot.adapters import Bot
+from nonebot.plugin import PluginMetadata
+from nonebot_plugin_apscheduler import scheduler
+from datetime import datetime
+import logging
 
-# 定时任务所需的调度器
-scheduler = require("nonebot_plugin_apscheduler").scheduler
+# 配置日志
+logger = logging.getLogger(__name__)
 
-# 自动群签到任务，每天9点触发
-@scheduler.scheduled_job("cron", hour=9, minute=0)  # 每天早上9点
-async def auto_group_sign_in():
-    bot = get_bot()  # 获取机器人实例
-    await group_sign_in(bot)
+# 插件元数据
+__plugin_meta__ = PluginMetadata(
+    name="定时群打卡",
+    description="定时打卡指定的群",
+    usage="自动执行群打卡任务",
+    type="application",
+    homepage="https://github.com/NoneBot/NoneBot",
+    config="群打卡API接口配置"
+)
 
-# 手动签到命令，仅超级用户可用
-group_sign = on_command("群打卡", permission=SUPERUSER, priority=5)
+# 配置群列表，只打卡指定群
+config = {
+    "group_list": [123456789, 987654321],  # 需要打卡的群ID
+}
 
-# 手动打卡执行逻辑
-@group_sign.handle()
-async def handle_group_sign(bot: Bot):
-    await group_sign_in(bot)
-
-# 群签到任务执行函数
-async def group_sign_in(bot: Bot):
+# 群打卡函数
+async def check_in_group(bot: Bot, group_id: int):
     try:
-        # 获取机器人所在的所有群信息
-        group_list = await bot.call_api("get_group_list")
-        for group in group_list:
-            group_id = str(group["group_id"])  # 确保 group_id 是字符串类型
-
-            # 随机等待一段时间，避免连续操作触发风控
-            delay = random.uniform(10, 30)  # 随机间隔10到30秒
-            logger.info(f"等待 {delay:.2f} 秒后为群 {group_id} 签到...")
-            await asyncio.sleep(delay)
-
-            # 调用set_group_sign API接口进行签到
-            try:
-                await bot.call_api('set_group_sign', group_id=group_id)
-                logger.info(f"群 {group_id} 签到成功！")
-            except Exception as e:
-                logger.error(f"群 {group_id} 签到失败: {e}")
-    
+        # 调用 OneBot API 打卡
+        await bot.call_api('set_group_sign', group_id=group_id)
+        logger.info(f"群 {group_id} 签到成功！")
     except Exception as e:
-        logger.error(f"自动签到出错: {e}")
+        logger.error(f"群 {group_id} 打卡失败: {e}")
 
+# 定时任务：每天晚上12点01分进行打卡
+@scheduler.scheduled_job("cron", hour=0, minute=1)  # 每天 00:01 执行打卡
+async def scheduled_check_in():
+    # 获取当前时间
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logger.info(f"定时任务开始，时间：{now}")
+
+    # 获取当前Bot实例
+    bot = nonebot.get_bot()
+
+    # 遍历配置中的群ID进行打卡
+    for group_id in config["group_list"]:
+        await check_in_group(bot, group_id)

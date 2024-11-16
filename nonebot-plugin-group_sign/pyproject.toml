@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nonebot_plugin_group_sign"
-version = "0.1.0"
+version = "0.1.1"
 description = "定时群打卡"
 authors = ["Endless-Path <rk.chensiyu@gmail.com>"]
 license = "MIT"
