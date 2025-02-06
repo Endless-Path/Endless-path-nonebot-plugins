@@ -17,12 +17,11 @@ __plugin_meta__ = PluginMetadata(
 like = on_command("赞我", aliases={"点赞"}, priority=5, block=True)
 
 @like.handle()
-async def _(bot: Bot, event: Event):
-    user_id = event.get_user_id()
-    try:
+async def _(bot: Bot, user_id):
+        try:
         # 调用 OneBot V11 的 send_like 接口给用户点赞
-        await bot.call_api("send_like", user_id=user_id, times=10)
-        msg = Message(MessageSegment.text("已为你点赞10次啦~"))
+        await bot.call_api("send_like", user_id=user_id, times=50)
+        msg = Message(MessageSegment.text("已点赞~"))
     except ActionFailed as e:
         if "点赞数已达上限" in str(e):
             msg = Message(MessageSegment.text("今天已经给你点过赞啦，明天再来吧~"))
